@@ -472,8 +472,11 @@ int bam_sanitize(sam_hdr_t *h, bam1_t *b, int flags) {
     return 0;
 }
 
+#define outNum 25
+
 // currently, this function ONLY works if each read has one hit
-static int bam_mating_core(samFile *in, samFile *out, int remove_reads,
+//static int bam_mating_core(samFile *in, samFile *out, int remove_reads,
+int bam_mating_core(samFile *in, samFile *out[outNum], int remove_reads,
                            int proper_pair_check, int add_ct,
                            int do_mate_scoring, char *arg_list, int no_pg,
                            int sanitize_flags)
@@ -504,7 +507,8 @@ static int bam_mating_core(samFile *in, samFile *out, int remove_reads,
                                  NULL))
         goto fail;
 
-    if (sam_hdr_write(out, header) < 0) goto write_fail;
+    for(int i = 0; i < outNum; i++)
+        if (sam_hdr_write(out[i], header) < 0) goto write_fail;
 
     b[0] = bam_init1();
     b[1] = bam_init1();
@@ -516,13 +520,15 @@ static int bam_mating_core(samFile *in, samFile *out, int remove_reads,
         if (cur->core.flag & BAM_FSECONDARY)
         {
             if ( !remove_reads ) {
-                if (sam_write1(out, header, cur) < 0) goto write_fail;
+                if (sam_write1(out[(cur->core.tid >= 0 && cur->core.tid < 24) ? cur->core.tid : 24], header, cur) < 0) goto write_fail;
+                //if (sam_write1(out[1], header, cur) < 0) goto write_fail;
             }
             continue; // skip secondary alignments
         }
         if (cur->core.flag & BAM_FSUPPLEMENTARY)
         {
-            if (sam_write1(out, header, cur) < 0) goto write_fail;
+            if (sam_write1(out[(cur->core.tid >= 0 && cur->core.tid < 24) ? cur->core.tid : 24], header, cur) < 0) goto write_fail;
+            //if (sam_write1(out[0], header, cur) < 0) goto write_fail;
             continue; // pass supplementary alignments through unchanged (TODO:make them match read they came from)
         }
         if ((cur->core.flag&BAM_FUNMAP) == 0) // If mapped calculate end
@@ -560,17 +566,26 @@ static int bam_mating_core(samFile *in, samFile *out, int remove_reads,
 
                 // Write out result
                 if ( !remove_reads ) {
-                    if (sam_write1(out, header, pre) < 0) goto write_fail;
-                    if (sam_write1(out, header, cur) < 0) goto write_fail;
+
+                    if (sam_write1(out[(pre->core.tid >= 0 && pre->core.tid < 24) ? pre->core.tid : 24], header, pre) < 0) goto write_fail;
+                    //if (sam_write1(out[0], header, pre) < 0) goto write_fail;
+
+
+                    if (sam_write1(out[(cur->core.tid >= 0 && cur->core.tid < 24) ? cur->core.tid : 24], header, cur) < 0) goto write_fail;
+                    //if (sam_write1(out[0], header, cur) < 0) goto write_fail;
                 } else {
                     // If we have to remove reads make sure we do it in a way that doesn't create orphans with bad flags
                     if(pre->core.flag&BAM_FUNMAP) cur->core.flag &= ~(BAM_FPAIRED|BAM_FMREVERSE|BAM_FPROPER_PAIR);
                     if(cur->core.flag&BAM_FUNMAP) pre->core.flag &= ~(BAM_FPAIRED|BAM_FMREVERSE|BAM_FPROPER_PAIR);
                     if(!(pre->core.flag&BAM_FUNMAP)) {
-                        if (sam_write1(out, header, pre) < 0) goto write_fail;
+
+                        if (sam_write1(out[(pre->core.tid >= 0 && pre->core.tid < 24) ? pre->core.tid : 24], header, pre) < 0) goto write_fail;
+                        //if (sam_write1(out[0], header, pre) < 0) goto write_fail;
                     }
                     if(!(cur->core.flag&BAM_FUNMAP)) {
-                        if (sam_write1(out, header, cur) < 0) goto write_fail;
+
+                        if (sam_write1(out[(cur->core.tid >= 0 && cur->core.tid < 24) ? cur->core.tid : 24], header, cur) < 0) goto write_fail;
+                        //if (sam_write1(out[0], header, cur) < 0) goto write_fail;
                     }
                 }
                 has_prev = 0;
@@ -578,7 +593,9 @@ static int bam_mating_core(samFile *in, samFile *out, int remove_reads,
                 pre->core.mtid = -1; pre->core.mpos = -1; pre->core.isize = 0;
                 pre->core.flag &= ~(BAM_FPAIRED|BAM_FMREVERSE|BAM_FPROPER_PAIR);
                 if ( !remove_reads || !(pre->core.flag&BAM_FUNMAP) ) {
-                    if (sam_write1(out, header, pre) < 0) goto write_fail;
+
+                    if (sam_write1(out[(pre->core.tid >= 0 && pre->core.tid < 24) ? pre->core.tid : 24], header, pre) < 0) goto write_fail;
+                    //if (sam_write1(out[0], header, pre) < 0) goto write_fail;
                 }
             }
         } else has_prev = 1;
@@ -596,7 +613,8 @@ static int bam_mating_core(samFile *in, samFile *out, int remove_reads,
         pre->core.mtid = -1; pre->core.mpos = -1; pre->core.isize = 0;
         pre->core.flag &= ~(BAM_FPAIRED|BAM_FMREVERSE|BAM_FPROPER_PAIR);
 
-        if (sam_write1(out, header, pre) < 0) goto write_fail;
+        if (sam_write1(out[(pre->core.tid >= 0 && pre->core.tid < 24) ? pre->core.tid : 24], header, pre) < 0) goto write_fail;
+        //if (sam_write1(out[0], header, pre) < 0) goto write_fail;
     }
     sam_hdr_destroy(header);
     bam_destroy1(b[0]);
@@ -644,7 +662,7 @@ void usage(FILE* where)
 int bam_mating(int argc, char *argv[])
 {
     htsThreadPool p = {NULL, 0};
-    samFile *in = NULL, *out = NULL;
+    samFile *in = NULL, *out[outNum] = {NULL};
     int c, remove_reads = 0, proper_pair_check = 1, add_ct = 0, res = 1,
         mate_score = 0, no_pg = 0, sanitize_flags = FIX_ALL;
     sam_global_args ga = SAM_GLOBAL_ARGS_INIT;
@@ -685,11 +703,31 @@ int bam_mating(int argc, char *argv[])
         print_error_errno("fixmate", "cannot open input file");
         goto fail;
     }
-    sam_open_mode(wmode+1, argv[optind+1], NULL);
-    if ((out = sam_open_format(argv[optind+1], wmode, &ga.out)) == NULL) {
-        print_error_errno("fixmate", "cannot open output file");
-        goto fail;
+
+    //add by ylf
+    //create outNum output file
+	const char* filename = argv[optind + 1];
+    char new_filenames[outNum][1024];
+
+    const char* last_dot = strrchr(filename, '.');
+    if (last_dot) {
+        for(int i = 0; i < outNum; i++)
+            snprintf(new_filenames[i], 1024, "%.*s%d%s", (int)(last_dot - filename), filename, i, last_dot);
+    } else {
+        fprintf(stderr, "Invalid filename: %s\n", filename);
+        return 1;
     }
+
+    sam_open_mode(wmode+1, new_filenames[0], NULL);
+
+    for(int i = 0; i < outNum; i++) {
+        printf("==== %s\n", new_filenames[i]);
+        if ((out[i] = sam_open_format(new_filenames[i], wmode, &ga.out)) == NULL) {
+            print_error_errno("fixmate", "cannot open output file");
+            goto fail;
+        }
+    }
+
 
     if (ga.nthreads > 0) {
         if (!(p.pool = hts_tpool_init(ga.nthreads))) {
@@ -697,7 +735,8 @@ int bam_mating(int argc, char *argv[])
             goto fail;
         }
         hts_set_opt(in,  HTS_OPT_THREAD_POOL, &p);
-        hts_set_opt(out, HTS_OPT_THREAD_POOL, &p);
+        for(int i = 0; i < outNum; i++)
+            hts_set_opt(out[i], HTS_OPT_THREAD_POOL, &p);
     }
 
     // run
@@ -706,11 +745,12 @@ int bam_mating(int argc, char *argv[])
 
     // cleanup
     sam_close(in);
-    if (sam_close(out) < 0) {
-        fprintf(stderr, "[bam_mating] error while closing output file\n");
-        res = 1;
+    for(int i = 0; i < outNum; i++) {
+        if (sam_close(out[i]) < 0) {
+            fprintf(stderr, "[bam_mating] error while closing output file\n");
+            res = 1;
+        }
     }
-
     if (p.pool) hts_tpool_destroy(p.pool);
     free(arg_list);
     sam_global_args_free(&ga);
@@ -718,7 +758,8 @@ int bam_mating(int argc, char *argv[])
 
  fail:
     if (in) sam_close(in);
-    if (out) sam_close(out);
+    for(int i = 0; i < outNum; i++)
+        if (out[i]) sam_close(out[i]);
     if (p.pool) hts_tpool_destroy(p.pool);
     free(arg_list);
     sam_global_args_free(&ga);
